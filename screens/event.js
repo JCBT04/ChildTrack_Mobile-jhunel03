@@ -12,11 +12,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
-
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
-
 const EVENTS_ENDPOINT = `${BACKEND_URL}/api/parents/events/`;
 
 const Events = ({ navigation, route }) => {
@@ -98,19 +95,11 @@ const Events = ({ navigation, route }) => {
       }
 
       setStudentSection(section);
-      console.log('[Events] Loading events for section:', section);
-
-      // Build query with section filter
-      const params = [];
-      if (section) {
-        params.push(`section=${encodeURIComponent(section)}`);
-      }
-      
-      const queryUrl = params.length 
-        ? `${EVENTS_ENDPOINT}?${params.join('&')}` 
-        : EVENTS_ENDPOINT;
-
-      console.log('[Events] Fetching from:', queryUrl);
+      console.log('[Events] ========== EVENT FILTERING DEBUG ==========');
+      console.log('[Events] Student section:', section);
+      console.log('[Events] Section type:', typeof section);
+      console.log('[Events] Section is null/undefined:', section === null || section === undefined);
+      console.log('[Events] Section is empty string:', section === '');
 
       // Get token for authentication
       const token = await AsyncStorage.getItem('token');
@@ -119,7 +108,9 @@ const Events = ({ navigation, route }) => {
         headers['Authorization'] = `Token ${token}`;
       }
 
-      const response = await fetch(queryUrl, { headers });
+      // Fetch ALL events first (without section filter in URL)
+      console.log('[Events] Fetching from:', EVENTS_ENDPOINT);
+      const response = await fetch(EVENTS_ENDPOINT, { headers });
       console.log('[Events] Response status:', response.status);
 
       if (!response.ok) {
@@ -138,12 +129,17 @@ const Events = ({ navigation, route }) => {
         data = [];
       }
 
-      console.log('[Events] Received', data.length, 'events');
+      console.log('[Events] Total events received:', data.length);
+      
+      // Log all events with their sections for debugging
+      data.forEach((event, idx) => {
+        console.log(`[Events] Event ${idx + 1}: "${event.title}" | Section: "${event.section}" | Type: ${typeof event.section} | Is null: ${event.section === null}`);
+      });
 
       // Get current date/time for filtering
       const now = new Date();
 
-      // Transform data for display
+      // Transform and filter data
       const transformedEvents = data
         .map((event, idx) => ({
           id: event.id ? String(event.id) : String(idx + 1),
@@ -158,6 +154,31 @@ const Events = ({ navigation, route }) => {
           section: event.section || null,
           teacher: event.teacher_name || null,
         }))
+        // CLIENT-SIDE FILTER: Only show events for the student's section or events with no section (general)
+        .filter(event => {
+          // If student has no section (null, undefined, or empty string), only show general events
+          if (!section || section.trim() === '') {
+            // Only show events with no section
+            const isGeneralEvent = !event.section || event.section.trim() === '';
+            console.log(`[Events] Student has NO section. Event "${event.title}" (section: "${event.section}") is ${isGeneralEvent ? 'GENERAL - INCLUDE' : 'SPECIFIC - EXCLUDE'}`);
+            return isGeneralEvent;
+          }
+          
+          // Student has a section - show events with no section (general) OR matching section
+          if (!event.section || event.section.trim() === '') {
+            console.log(`[Events] Event "${event.title}" has NO section - GENERAL EVENT - INCLUDE`);
+            return true;
+          }
+          
+          // Compare sections (case-insensitive)
+          const eventSectionLower = event.section.toLowerCase().trim();
+          const studentSectionLower = section.toLowerCase().trim();
+          const matches = eventSectionLower === studentSectionLower;
+          
+          console.log(`[Events] Event "${event.title}" section "${event.section}" ${matches ? 'MATCHES' : 'DOES NOT MATCH'} student section "${section}"`);
+          
+          return matches;
+        })
         // Filter out past events - only show upcoming or today's events
         .filter(event => {
           if (!event.rawDate) return true; // Keep events without dates
@@ -179,9 +200,13 @@ const Events = ({ navigation, route }) => {
         return new Date(a.rawDate) - new Date(b.rawDate);
       });
 
+      console.log('[Events] ========== FILTERING COMPLETE ==========');
+      console.log('[Events] Final filtered events count:', transformedEvents.length);
+      console.log('[Events] Filtered events:', transformedEvents.map(e => ({ title: e.title, section: e.section || 'GENERAL' })));
+      console.log('[Events] ==========================================');
+
       setEvents(transformedEvents);
       setError(null);
-      console.log('[Events] Successfully loaded', transformedEvents.length, 'upcoming events');
 
     } catch (err) {
       console.error('[Events] Load failed:', err);
@@ -255,6 +280,13 @@ const Events = ({ navigation, route }) => {
           {item.section && (
             <View style={styles.sectionBadge}>
               <Text style={styles.sectionText}>Section {item.section}</Text>
+            </View>
+          )}
+          
+          {/* Show "All Sections" badge for general events */}
+          {!item.section && (
+            <View style={[styles.sectionBadge, { backgroundColor: 'rgba(46, 204, 113, 0.2)' }]}>
+              <Text style={[styles.sectionText, { color: '#2ecc71' }]}>All Sections</Text>
             </View>
           )}
         </View>
