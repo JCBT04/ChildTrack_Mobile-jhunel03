@@ -249,6 +249,13 @@ const Attendance = ({ navigation }) => {
     await loadAttendance({ skipLoading: true });
   };
 
+  const legendItems = [
+    { icon: 'checkmark-circle', color: '#2ecc71', label: 'Present', bgLight: '#e8f8f0' },
+    { icon: 'close-circle', color: '#e74c3c', label: 'Absent', bgLight: '#fdeaea' },
+    { icon: 'time', color: '#f39c12', label: 'Late', bgLight: '#fef5e7' },
+    { icon: 'remove-circle', color: '#95a5a6', label: 'Dropped Out', bgLight: '#f4f6f7' },
+  ];
+
   return (
     <LinearGradient
       colors={isDark ? ["#0b0f19", "#1a1f2b"] : ["#f5f5f5", "#e0e0e0"]}
@@ -327,44 +334,28 @@ const Attendance = ({ navigation }) => {
           />
         </View>
 
-        {/* Updated Legend - Only 4 statuses */}
+        {/* Improved Legend Design */}
         <View style={styles.legendContainer}>
-          <View
-            style={[
-              styles.legendCard,
-              { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-            ]}
-          >
-            <View style={[styles.dot, { backgroundColor: "green" }]} />
-            <Text style={{ color: isDark ? "#fff" : "#333" }}>Present</Text>
-          </View>
-          <View
-            style={[
-              styles.legendCard,
-              { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-            ]}
-          >
-            <View style={[styles.dot, { backgroundColor: "red" }]} />
-            <Text style={{ color: isDark ? "#fff" : "#333" }}>Absent</Text>
-          </View>
-          <View
-            style={[
-              styles.legendCard,
-              { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-            ]}
-          >
-            <View style={[styles.dot, { backgroundColor: "orange" }]} />
-            <Text style={{ color: isDark ? "#fff" : "#333" }}>Late</Text>
-          </View>
-          <View
-            style={[
-              styles.legendCard,
-              { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-            ]}
-          >
-            <View style={[styles.dot, { backgroundColor: "gray" }]} />
-            <Text style={{ color: isDark ? "#fff" : "#333" }}>Dropped Out</Text>
-          </View>
+          {legendItems.map((item, index) => (
+            <View
+              key={index}
+              style={[
+                styles.legendCard,
+                { 
+                  backgroundColor: isDark ? "#1e1e1e" : item.bgLight,
+                  borderLeftWidth: 3,
+                  borderLeftColor: item.color,
+                },
+              ]}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: item.color }]}>
+                <Ionicons name={item.icon} size={18} color="#fff" />
+              </View>
+              <Text style={[styles.legendText, { color: isDark ? "#fff" : "#333" }]}>
+                {item.label}
+              </Text>
+            </View>
+          ))}
         </View>
       </ScrollView>
     </LinearGradient>
@@ -397,28 +388,38 @@ const styles = StyleSheet.create({
   },
   legendContainer: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: 20,
-    paddingHorizontal: 0,
     flexWrap: "wrap",
-    gap: 8,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    marginTop: 20,
+    marginBottom: 20,
+    gap: 12,
   },
   legendCard: {
     flexDirection: "row",
     alignItems: "center",
     borderRadius: 12,
-    paddingVertical: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    width: "48%",
     elevation: 3,
     shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 6,
+  iconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  legendText: {
+    fontSize: 14,
+    fontWeight: "600",
+    flex: 1,
   },
   childCard: {
     marginHorizontal: 16,
