@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "childtrack1",
+    "name": "ChildTrack",
     "slug": "snack-c5b80c95-890b-4f8f-a895-0b0a31a3c336",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/ficon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/ficon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -17,13 +17,18 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/ficon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/ficon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "52f33085-1102-4665-8526-15ea6f5de902"
+      }
     }
   }
 }
