@@ -47,7 +47,7 @@
       ]
     ],
     "notification": {
-      "icon": "./assets/notification-icon.png",
+      "icon": "./assets/ficon.png",
       "color": "#3498db",
       "androidMode": "default",
       "androidCollapsedTitle": "ChildTrack Updates"
