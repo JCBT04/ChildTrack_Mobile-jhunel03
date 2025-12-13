@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -6,17 +6,31 @@ import {
   SectionList,
   ActivityIndicator,
   RefreshControl,
+  Alert,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { TouchableOpacity } from 'react-native';
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 
 const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
-const Notifications = ({ navigation }) => {
+// Configure how notifications are handled when the app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+
+const NotificationsScreen = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
   const isDark = darkModeEnabled;
 
@@ -24,6 +38,11 @@ const Notifications = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [readIds, setReadIds] = useState(new Set());
+  const [expoPushToken, setExpoPushToken] = useState('');
+  const [permissionStatus, setPermissionStatus] = useState('undetermined');
+  
+  const notificationListener = useRef();
+  const responseListener = useRef();
 
   const USE_SINGLE_COLOR_NOTIF = false;
   const SINGLE_COLOR_NOTIF = '#3498db';
@@ -57,6 +76,93 @@ const Notifications = ({ navigation }) => {
   };
 
   const READ_IDS_KEY = 'read_notifications';
+
+  // Request notification permissions
+  const registerForPushNotificationsAsync = async () => {
+    let token;
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+      });
+    }
+
+    if (Device.isDevice) {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      setPermissionStatus(existingStatus);
+
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+        setPermissionStatus(status);
+      }
+
+      if (finalStatus !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Please enable notifications in your device settings to receive important updates about your child.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Notifications.getPermissionsAsync() }
+          ]
+        );
+        return;
+      }
+
+      try {
+        const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+        if (!projectId) {
+          console.warn('Project ID not found');
+        }
+        token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+        console.log('Push token:', token);
+        setExpoPushToken(token);
+        
+        // Save token to backend
+        await savePushTokenToBackend(token);
+      } catch (e) {
+        console.error('Error getting push token:', e);
+      }
+    } else {
+      Alert.alert('Error', 'Must use physical device for Push Notifications');
+    }
+
+    return token;
+  };
+
+  // Save push token to your backend
+  const savePushTokenToBackend = async (token) => {
+    try {
+      const authToken = await AsyncStorage.getItem('token');
+      const parentRaw = await AsyncStorage.getItem("parent");
+      
+      if (!authToken || !parentRaw) return;
+      
+      const parent = JSON.parse(parentRaw);
+      
+      const response = await fetch(`${BACKEND_URL}/api/parents/${parent.id}/push-token/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Token ${authToken}`,
+        },
+        body: JSON.stringify({
+          push_token: token,
+          device_type: Platform.OS,
+        }),
+      });
+
+      if (response.ok) {
+        console.log('Push token saved to backend');
+      }
+    } catch (error) {
+      console.error('Error saving push token:', error);
+    }
+  };
 
   const isSameDay = (d1, d2) => {
     if (!d1 || !d2) return false;
@@ -104,14 +210,13 @@ const Notifications = ({ navigation }) => {
       source: 'parent',
     }));
 
-    // Fetch attendance records and create notifications for Present, Pick-up, and Drop-off
+    // Fetch attendance records
     let attendanceItems = [];
     try {
       const attendResp = await fetch(`${BACKEND_URL}/api/attendance/public/`);
       if (attendResp.ok) {
         let attendData = await attendResp.json();
         attendData = Array.isArray(attendData) ? attendData : (Array.isArray(attendData.results) ? attendData.results : []);
-        console.log('[Notifications] attendance total records:', (attendData || []).length);
         
         let storedParent = null;
         try { storedParent = parentRaw ? JSON.parse(parentRaw) : null; } catch (e) { storedParent = null; }
@@ -126,9 +231,7 @@ const Notifications = ({ navigation }) => {
           if (myStudentName && recName && myStudentName === recName) return true;
           return false;
         });
-        console.log('[Notifications] attendance filtered for student:', { myStudentName, myStudentLrn, matched: (filtered || []).length });
 
-        // Keep records from today and yesterday
         const today = new Date();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
@@ -139,28 +242,25 @@ const Notifications = ({ navigation }) => {
           const recDate = new Date(rawDate);
           if (Number.isNaN(recDate.getTime())) return false;
           const status = (it.status || '').toString().toLowerCase().trim().replace(/[\s_-]/g, '');
-          // Include Present, Pick-up, Drop-off
           const isValidStatus = (status === 'present' || status === 'pickup' || status === 'dropoff');
           const isRecentDate = isSameDay(recDate, today) || isSameDay(recDate, yesterday);
           return isValidStatus && isRecentDate;
         });
 
-        console.log('[Notifications] attendance recentMatches count:', (recentMatches || []).length);
-
         attendanceItems = (recentMatches || []).map(it => {
           const status = (it.status || '').toString().toLowerCase().trim().replace(/[\s_-]/g, '');
           let message = 'Your child is in the classroom';
           let icon = 'people';
-          let color = '#27ae60'; // green for present
+          let color = '#27ae60';
           
           if (status === 'pickup') {
             message = 'Your child has been picked up';
             icon = 'log-out-outline';
-            color = '#3498db'; // blue for pickup
+            color = '#3498db';
           } else if (status === 'dropoff') {
             message = 'Your child is in the classroom';
             icon = 'people';
-            color = '#27ae60'; // green (same as present)
+            color = '#27ae60';
           }
 
           const itemDate = it.date || it.timestamp || it.created_at;
@@ -183,19 +283,17 @@ const Notifications = ({ navigation }) => {
       console.warn('[Notifications] attendance fetch failed', e);
     }
 
-    // Fetch events for the student's section (upcoming)
+    // Fetch events
     let eventItems = [];
     try {
       let storedParentForEvents = null;
       try { storedParentForEvents = parentRaw ? JSON.parse(parentRaw) : null; } catch (e) { storedParentForEvents = null; }
       const section = storedParentForEvents?.student_section || storedParentForEvents?.student?.section || null;
       const eventsQuery = section ? `${BACKEND_URL}/api/parents/events/?section=${encodeURIComponent(section)}` : `${BACKEND_URL}/api/parents/events/`;
-      console.log('[Notifications] fetching events with query:', eventsQuery, 'section:', section);
       const eventsResp = await fetch(eventsQuery);
       if (eventsResp.ok) {
         let eventsData = await eventsResp.json();
         eventsData = Array.isArray(eventsData) ? eventsData : (Array.isArray(eventsData.results) ? eventsData.results : []);
-        console.log('[Notifications] events total records:', (eventsData || []).length);
         const now = new Date();
         const cutoff = new Date();
         cutoff.setDate(now.getDate() + 7);
@@ -207,7 +305,6 @@ const Notifications = ({ navigation }) => {
           if (Number.isNaN(d.getTime())) return false;
           return isSameDay(d, now) || (d >= now && d <= cutoff);
         });
-        console.log('[Notifications] upcoming events count:', (upcoming || []).length);
 
         eventItems = (upcoming || []).map(ev => {
           const eventDate = ev.scheduled_at || ev.timestamp || ev.date;
@@ -238,7 +335,6 @@ const Notifications = ({ navigation }) => {
       if (guardiansResp.ok) {
         let guardiansData = await guardiansResp.json();
         guardiansData = Array.isArray(guardiansData) ? guardiansData : (Array.isArray(guardiansData.results) ? guardiansData.results : (Array.isArray(guardiansData.value) ? guardiansData.value : []));
-        console.log('[Notifications] guardian public total records:', (guardiansData || []).length);
 
         let storedParentForGuardians = null;
         try { storedParentForGuardians = parentRaw ? JSON.parse(parentRaw) : null; } catch (e) { storedParentForGuardians = null; }
@@ -255,7 +351,6 @@ const Notifications = ({ navigation }) => {
           if (myStudentName && recName && myStudentName === recName) return true;
           return false;
         });
-        console.log('[Notifications] unregistered guardians matched:', (matched || []).length);
 
         unregisteredItems = (matched || []).map(u => {
           const guardianDate = u.created_at || u.timestamp;
@@ -296,7 +391,6 @@ const Notifications = ({ navigation }) => {
       }
     });
 
-    // Sort each group by timestamp (most recent first)
     today.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     earlier.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
@@ -313,6 +407,11 @@ const Notifications = ({ navigation }) => {
 
   useEffect(() => {
     let mounted = true;
+    
+    // Request notification permissions
+    registerForPushNotificationsAsync();
+
+    // Load notifications
     (async () => {
       try {
         const items = await fetchNotificationsFromAPI();
@@ -331,7 +430,32 @@ const Notifications = ({ navigation }) => {
         if (mounted) setLoading(false);
       }
     })();
-    return () => { mounted = false; };
+
+    // Notification listeners
+    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+      console.log('Notification received:', notification);
+      // Refresh notifications when a new one arrives
+      onRefresh();
+    });
+
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log('Notification tapped:', response);
+      const data = response.notification.request.content.data;
+      // Handle notification tap - navigate to relevant screen
+      if (data?.event_id) {
+        navigation.navigate('event', { id: data.event_id });
+      }
+    });
+
+    return () => {
+      mounted = false;
+      if (notificationListener.current) {
+        Notifications.removeNotificationSubscription(notificationListener.current);
+      }
+      if (responseListener.current) {
+        Notifications.removeNotificationSubscription(responseListener.current);
+      }
+    };
   }, []);
 
   const onRefresh = async () => {
@@ -449,7 +573,6 @@ const Notifications = ({ navigation }) => {
     }
   };
 
-  // Calculate total unread count
   const getTotalUnreadCount = () => {
     let total = 0;
     sections.forEach(section => {
@@ -460,6 +583,24 @@ const Notifications = ({ navigation }) => {
       });
     });
     return total;
+  };
+
+  // Show permission status indicator
+  const renderPermissionBanner = () => {
+    if (permissionStatus === 'granted') return null;
+    
+    return (
+      <TouchableOpacity 
+        style={[styles.permissionBanner, { backgroundColor: isDark ? '#2d3748' : '#fff3cd' }]}
+        onPress={registerForPushNotificationsAsync}
+      >
+        <Ionicons name="notifications-off" size={20} color="#856404" style={{ marginRight: 8 }} />
+        <Text style={[styles.permissionText, { color: isDark ? '#ffd700' : '#856404' }]}>
+          Enable notifications to stay updated
+        </Text>
+        <Ionicons name="chevron-forward" size={20} color="#856404" />
+      </TouchableOpacity>
+    );
   };
 
   return (
@@ -492,6 +633,8 @@ const Notifications = ({ navigation }) => {
         ) : null}
       </View>
 
+      {renderPermissionBanner()}
+
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color={isDark ? '#fff' : '#333'} />
@@ -515,7 +658,7 @@ const Notifications = ({ navigation }) => {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { console.log('[Notifications] onRefresh called'); onRefresh(); }}
+              onRefresh={onRefresh}
               tintColor={isDark ? '#fff' : '#333'}
               colors={[isDark ? '#fff' : '#333']}
               progressBackgroundColor={isDark ? '#111' : '#fff'}
@@ -543,6 +686,21 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "700",
     marginLeft: 12,
+  },
+  permissionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ffeaa7',
+  },
+  permissionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
   },
   sectionHeader: {
     paddingVertical: 12,
@@ -589,4 +747,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Notifications;
+export default NotificationsScreen;

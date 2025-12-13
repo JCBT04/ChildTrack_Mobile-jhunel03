@@ -54,6 +54,7 @@ const Events = ({ navigation, route }) => {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [studentSection, setStudentSection] = useState(null);
+  const [teacherName, setTeacherName] = useState(null);
 
   const formatDate = (dateString) => {
     if (!dateString) return 'Date not set';
@@ -76,17 +77,22 @@ const Events = ({ navigation, route }) => {
     setError(null);
     
     try {
-      // Get section from route params or stored parent data
+      // Get section and teacher from route params or stored parent data
       let section = route?.params?.section || null;
+      let teacher = null;
       
-      if (!section) {
-        // Try to get section from stored parent data
+      if (!section || !teacher) {
+        // Try to get section and teacher from stored parent data
         const storedParent = await AsyncStorage.getItem('parent');
         if (storedParent) {
           try {
             const parentData = JSON.parse(storedParent);
-            section = parentData.student_section || 
+            section = section || parentData.student_section || 
                      (parentData.student && parentData.student.section) || 
+                     null;
+            teacher = parentData.teacher_name || 
+                     (parentData.teacher && parentData.teacher.name) ||
+                     parentData.student_teacher ||
                      null;
           } catch (e) {
             console.warn('[Events] Failed to parse stored parent', e);
@@ -95,11 +101,15 @@ const Events = ({ navigation, route }) => {
       }
 
       setStudentSection(section);
+      setTeacherName(teacher);
+      
       console.log('[Events] ========== EVENT FILTERING DEBUG ==========');
       console.log('[Events] Student section:', section);
+      console.log('[Events] Student teacher:', teacher);
       console.log('[Events] Section type:', typeof section);
+      console.log('[Events] Teacher type:', typeof teacher);
       console.log('[Events] Section is null/undefined:', section === null || section === undefined);
-      console.log('[Events] Section is empty string:', section === '');
+      console.log('[Events] Teacher is null/undefined:', teacher === null || teacher === undefined);
 
       // Get token for authentication
       const token = await AsyncStorage.getItem('token');
@@ -108,7 +118,7 @@ const Events = ({ navigation, route }) => {
         headers['Authorization'] = `Token ${token}`;
       }
 
-      // Fetch ALL events first (without section filter in URL)
+      // Fetch ALL events first (without filters in URL)
       console.log('[Events] Fetching from:', EVENTS_ENDPOINT);
       const response = await fetch(EVENTS_ENDPOINT, { headers });
       console.log('[Events] Response status:', response.status);
@@ -131,9 +141,9 @@ const Events = ({ navigation, route }) => {
 
       console.log('[Events] Total events received:', data.length);
       
-      // Log all events with their sections for debugging
+      // Log all events with their sections and teachers for debugging
       data.forEach((event, idx) => {
-        console.log(`[Events] Event ${idx + 1}: "${event.title}" | Section: "${event.section}" | Type: ${typeof event.section} | Is null: ${event.section === null}`);
+        console.log(`[Events] Event ${idx + 1}: "${event.title}" | Section: "${event.section}" | Teacher: "${event.teacher_name}" | Type: ${typeof event.section}`);
       });
 
       // Get current date/time for filtering
@@ -154,30 +164,56 @@ const Events = ({ navigation, route }) => {
           section: event.section || null,
           teacher: event.teacher_name || null,
         }))
-        // CLIENT-SIDE FILTER: Only show events for the student's section or events with no section (general)
+        // CLIENT-SIDE FILTER: Filter by BOTH section AND teacher
         .filter(event => {
-          // If student has no section (null, undefined, or empty string), only show general events
-          if (!section || section.trim() === '') {
-            // Only show events with no section
-            const isGeneralEvent = !event.section || event.section.trim() === '';
-            console.log(`[Events] Student has NO section. Event "${event.title}" (section: "${event.section}") is ${isGeneralEvent ? 'GENERAL - INCLUDE' : 'SPECIFIC - EXCLUDE'}`);
+          // Check if event has no section AND no teacher (general event for everyone)
+          const isGeneralEvent = (!event.section || event.section.trim() === '') && 
+                                (!event.teacher || event.teacher.trim() === '');
+          
+          // If student has no section and no teacher, only show general events
+          if ((!section || section.trim() === '') && (!teacher || teacher.trim() === '')) {
+            console.log(`[Events] Student has NO section/teacher. Event "${event.title}" is ${isGeneralEvent ? 'GENERAL - INCLUDE' : 'SPECIFIC - EXCLUDE'}`);
             return isGeneralEvent;
           }
           
-          // Student has a section - show events with no section (general) OR matching section
-          if (!event.section || event.section.trim() === '') {
-            console.log(`[Events] Event "${event.title}" has NO section - GENERAL EVENT - INCLUDE`);
+          // General events (no section AND no teacher) are visible to everyone
+          if (isGeneralEvent) {
+            console.log(`[Events] Event "${event.title}" is GENERAL EVENT - INCLUDE`);
             return true;
           }
           
-          // Compare sections (case-insensitive)
-          const eventSectionLower = event.section.toLowerCase().trim();
-          const studentSectionLower = section.toLowerCase().trim();
-          const matches = eventSectionLower === studentSectionLower;
+          // Check section match
+          let sectionMatches = false;
+          if (!section || section.trim() === '') {
+            // Student has no section - accept events with no section
+            sectionMatches = !event.section || event.section.trim() === '';
+          } else if (!event.section || event.section.trim() === '') {
+            // Event has no section - it's section-agnostic
+            sectionMatches = true;
+          } else {
+            // Both have sections - compare them
+            sectionMatches = event.section.toLowerCase().trim() === section.toLowerCase().trim();
+          }
           
-          console.log(`[Events] Event "${event.title}" section "${event.section}" ${matches ? 'MATCHES' : 'DOES NOT MATCH'} student section "${section}"`);
+          // Check teacher match
+          let teacherMatches = false;
+          if (!teacher || teacher.trim() === '') {
+            // Student has no teacher - accept events with no teacher
+            teacherMatches = !event.teacher || event.teacher.trim() === '';
+          } else if (!event.teacher || event.teacher.trim() === '') {
+            // Event has no teacher - it's teacher-agnostic
+            teacherMatches = true;
+          } else {
+            // Both have teachers - compare them (case-insensitive)
+            teacherMatches = event.teacher.toLowerCase().trim() === teacher.toLowerCase().trim();
+          }
           
-          return matches;
+          // Event passes if BOTH section AND teacher match (or are general)
+          const passes = sectionMatches && teacherMatches;
+          
+          console.log(`[Events] Event "${event.title}" | Section: ${sectionMatches ? '✓' : '✗'} | Teacher: ${teacherMatches ? '✓' : '✗'} | Result: ${passes ? 'INCLUDE' : 'EXCLUDE'}`);
+          
+          return passes;
         })
         // Filter out past events - only show upcoming or today's events
         .filter(event => {
@@ -202,7 +238,11 @@ const Events = ({ navigation, route }) => {
 
       console.log('[Events] ========== FILTERING COMPLETE ==========');
       console.log('[Events] Final filtered events count:', transformedEvents.length);
-      console.log('[Events] Filtered events:', transformedEvents.map(e => ({ title: e.title, section: e.section || 'GENERAL' })));
+      console.log('[Events] Filtered events:', transformedEvents.map(e => ({ 
+        title: e.title, 
+        section: e.section || 'ANY', 
+        teacher: e.teacher || 'ANY' 
+      })));
       console.log('[Events] ==========================================');
 
       setEvents(transformedEvents);
@@ -277,18 +317,26 @@ const Events = ({ navigation, route }) => {
             {item.description}
           </Text>
 
-          {item.section && (
-            <View style={styles.sectionBadge}>
-              <Text style={styles.sectionText}>Section {item.section}</Text>
-            </View>
-          )}
-          
-          {/* Show "All Sections" badge for general events */}
-          {!item.section && (
-            <View style={[styles.sectionBadge, { backgroundColor: 'rgba(46, 204, 113, 0.2)' }]}>
-              <Text style={[styles.sectionText, { color: '#2ecc71' }]}>All Sections</Text>
-            </View>
-          )}
+          <View style={styles.badgeContainer}>
+            {item.section ? (
+              <View style={styles.sectionBadge}>
+                <Text style={styles.sectionText}>Section {item.section}</Text>
+              </View>
+            ) : null}
+            
+            {item.teacher ? (
+              <View style={[styles.sectionBadge, { backgroundColor: 'rgba(155, 89, 182, 0.2)', marginLeft: item.section ? 8 : 0 }]}>
+                <Text style={[styles.sectionText, { color: '#9b59b6' }]}>{item.teacher}</Text>
+              </View>
+            ) : null}
+            
+            {/* Show "All Students" badge for general events (no section AND no teacher) */}
+            {!item.section && !item.teacher && (
+              <View style={[styles.sectionBadge, { backgroundColor: 'rgba(46, 204, 113, 0.2)' }]}>
+                <Text style={[styles.sectionText, { color: '#2ecc71' }]}>All Students</Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </TouchableOpacity>
@@ -322,9 +370,11 @@ const Events = ({ navigation, route }) => {
           <Text style={[styles.headerTitle, { color: isDark ? "#fff" : "#333" }]}>
             Upcoming Events
           </Text>
-          {studentSection && (
+          {(studentSection || teacherName) && (
             <Text style={[styles.headerSubtitle, { color: isDark ? "#a0aec0" : "#666" }]}>
-              Section {studentSection}
+              {studentSection && `Section ${studentSection}`}
+              {studentSection && teacherName && ' • '}
+              {teacherName}
             </Text>
           )}
         </View>
@@ -369,9 +419,11 @@ const Events = ({ navigation, route }) => {
               <Text style={[styles.emptyText, { color: isDark ? '#fff' : '#333' }]}>
                 No upcoming events
               </Text>
-              {studentSection && (
+              {(studentSection || teacherName) && (
                 <Text style={[styles.emptySubtext, { color: isDark ? '#a0aec0' : '#666' }]}>
-                  No upcoming events for Section {studentSection}
+                  No upcoming events for {studentSection && `Section ${studentSection}`}
+                  {studentSection && teacherName && ' with '}
+                  {teacherName}
                 </Text>
               )}
             </View>
@@ -455,6 +507,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 8,
+  },
+  badgeContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
   },
   sectionBadge: {
     alignSelf: 'flex-start',

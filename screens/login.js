@@ -12,13 +12,27 @@ import {
   Keyboard,
   Platform,
   ScrollView,
+  Alert,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 
 const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com/";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
+
+// Configure notification handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 const Login = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -32,6 +46,90 @@ const Login = ({ navigation }) => {
   const [parentsData, setParentsData] = useState(null);
   const [rememberMe, setRememberMe] = useState(false);
 
+  const passwordRef = useRef(null);
+
+  // Request notification permissions and get push token
+  const requestNotificationPermission = async () => {
+    try {
+      console.log('[Login] Requesting notification permissions...');
+      
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF231F7C',
+        });
+      }
+
+      if (!Device.isDevice) {
+        console.warn('[Login] Not a physical device, skipping push notifications');
+        return null;
+      }
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      if (finalStatus !== 'granted') {
+        console.warn('[Login] Notification permission denied');
+        return null;
+      }
+
+      console.log('[Login] Notification permission granted');
+
+      // Get push token
+      try {
+        const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+        const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+        console.log('[Login] Push token obtained:', token);
+        return token;
+      } catch (e) {
+        console.error('[Login] Error getting push token:', e);
+        return null;
+      }
+    } catch (error) {
+      console.error('[Login] Error requesting notification permission:', error);
+      return null;
+    }
+  };
+
+  // Save push token to backend
+  const savePushTokenToBackend = async (token, parentId, authToken) => {
+    if (!token || !parentId) {
+      console.warn('[Login] Missing token or parentId, skipping push token save');
+      return;
+    }
+
+    try {
+      console.log('[Login] Saving push token to backend...');
+      const response = await fetch(`${BACKEND_URL}/api/parents/${parentId}/push-token/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authToken ? `Token ${authToken}` : '',
+        },
+        body: JSON.stringify({
+          push_token: token,
+          device_type: Platform.OS,
+        }),
+      });
+
+      if (response.ok) {
+        console.log('[Login] Push token saved successfully');
+        await AsyncStorage.setItem('push_token_registered', 'true');
+      } else {
+        console.warn('[Login] Failed to save push token:', response.status);
+      }
+    } catch (error) {
+      console.error('[Login] Error saving push token:', error);
+    }
+  };
+
   const handleLogin = async () => {
     const trimmedUsername = (username || '').trim();
     const trimmedPassword = (password || '').trim();
@@ -44,7 +142,7 @@ const Login = ({ navigation }) => {
     setErrorMessage("");
 
     try {
-      const parentLoginUrl = `${DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "")}/api/parents/login/`;
+      const parentLoginUrl = `${BACKEND_URL}/api/parents/login/`;
       const presp = await fetch(parentLoginUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -64,7 +162,6 @@ const Login = ({ navigation }) => {
         setLoading(false);
         return;
       }
-
 
       if (pjson && pjson.parent) {
         // Persist parent object (used for offline/public flows)
@@ -87,7 +184,7 @@ const Login = ({ navigation }) => {
             await AsyncStorage.setItem("token", pjson.token);
           }
         } else {
-          // Clean up any previously stored sensitive credentials but keep username
+          // Clean up any previously stored sensitive credentials
           await AsyncStorage.removeItem("password");
           await AsyncStorage.removeItem("remember_me");
           if (pjson.token) {
@@ -101,13 +198,35 @@ const Login = ({ navigation }) => {
           await AsyncStorage.removeItem('parent_must_change');
         }
 
+        // Check if this is first login (notification permission not yet requested)
+        const hasRequestedPermission = await AsyncStorage.getItem('notification_permission_requested');
+        
+        if (!hasRequestedPermission) {
+          console.log('[Login] First login detected, requesting notification permission...');
+          
+          // Request notification permission
+          const pushToken = await requestNotificationPermission();
+          
+          // Save push token to backend if obtained
+          if (pushToken && pjson.parent.id && pjson.token) {
+            await savePushTokenToBackend(pushToken, pjson.parent.id, pjson.token);
+          }
+          
+          // Mark that we've requested permission (even if denied)
+          await AsyncStorage.setItem('notification_permission_requested', 'true');
+        } else {
+          console.log('[Login] Notification permission already requested previously');
+        }
+
         setErrorMessage("");
+        setLoading(false);
+        
+        // Navigate after permission request
         if (pjson.parent.must_change_credentials) {
           navigation.navigate('profile', { forceChange: true });
         } else {
           navigation.navigate('home');
         }
-        setLoading(false);
         return;
       }
 
@@ -132,8 +251,7 @@ const Login = ({ navigation }) => {
   };
 
   const fetchParents = async () => {
-    const base = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
-    const url = `${base}/api/parents/parents/`;
+    const url = `${BACKEND_URL}/api/parents/parents/`;
     try {
       const token = await AsyncStorage.getItem("token");
       const headers = { "Content-Type": "application/json" };
@@ -152,8 +270,6 @@ const Login = ({ navigation }) => {
       throw err;
     }
   };
-
-  const passwordRef = useRef(null);
 
   useEffect(() => {
     const loadSaved = async () => {
@@ -198,7 +314,6 @@ const Login = ({ navigation }) => {
       setRememberMe(newVal);
       if (newVal) {
         await AsyncStorage.setItem('remember_me', '1');
-        // do not store password here; password will be saved on successful login
       } else {
         // clear stored sensitive credentials immediately when user unchecks
         try {
@@ -308,7 +423,7 @@ const Login = ({ navigation }) => {
               {/* Remember me checkbox */}
               <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
                 <TouchableOpacity
-                  onPress={() => setRememberMe(!rememberMe)}
+                  onPress={() => toggleRememberMe()}
                   style={[
                     styles.checkbox,
                     isDark ? { borderColor: "#888" } : { borderColor: "#666" },
@@ -318,7 +433,7 @@ const Login = ({ navigation }) => {
                     <Ionicons name="checkmark" size={16} color={isDark ? "#fff" : "#000"} />
                   ) : null}
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setRememberMe(!rememberMe)}>
+                <TouchableOpacity onPress={() => toggleRememberMe()}>
                   <Text style={[styles.rememberText, isDark ? styles.darkText : styles.lightText]}>
                     Remember me
                   </Text>
@@ -388,13 +503,6 @@ const styles = StyleSheet.create({
   darkInput: { backgroundColor: "#2a2a2a" },
   icon: { marginRight: 6, marginLeft: -2 },
   eyeIcon: { position: "absolute", right: 12 },
-  forgotPassword: { 
-    marginTop: 15, 
-    fontSize: 14,
-    textAlign: "center"
-  },
-  lightLink: { color: "#0288D1" },
-  darkLink: { color: "#4FC3F7" },
   button: { 
     width: "100%", 
     padding: 15, 
@@ -419,4 +527,4 @@ const styles = StyleSheet.create({
   rememberText: { marginLeft: 10, fontSize: 14 },
 });
 
-export default Login
+export default Login;

@@ -61,14 +61,25 @@ const Home = ({ navigation }) => {
     },
   ];
 
-  // Helper function to get status color and label - LIMITED TO 4 OPTIONS
-  const getStatusInfo = (status) => {
+  // Helper function to check if date is weekend
+  const isWeekend = (date) => {
+    const day = date.getDay();
+    return day === 0 || day === 6; // 0 = Sunday, 6 = Saturday
+  };
+
+  // Helper function to get status color and label - now includes weekend
+  const getStatusInfo = (status, isWeekendDay = false) => {
+    // If it's a weekend, always show "Weekend" status
+    if (isWeekendDay) {
+      return { color: '#9b59b6', label: 'Weekend' };
+    }
+
     const normalizedStatus = (status || 'absent').toLowerCase().trim().replace(/[\s_-]/g, '');
     
     switch (normalizedStatus) {
       case 'present':
-      case 'pickup': // Pick-up also represents Present
-      case 'dropoff': // Drop-off also represents Present
+      case 'pickup':
+      case 'dropoff':
         return { color: '#2ecc71', label: 'Present' };
       case 'absent':
         return { color: '#e74c3c', label: 'Absent' };
@@ -77,8 +88,10 @@ const Home = ({ navigation }) => {
       case 'droppedout':
       case 'dropout':
         return { color: '#95a5a6', label: 'Dropped Out' };
+      case 'weekend':
+      case 'noclass':
+        return { color: '#9b59b6', label: 'Weekend' };
       default:
-        // Any other status defaults to Absent
         return { color: '#e74c3c', label: 'Absent' };
     }
   };
@@ -263,7 +276,8 @@ const Home = ({ navigation }) => {
         const month = String(today.getMonth() + 1).padStart(2, '0');
         const date = String(today.getDate()).padStart(2, '0');
         const todayStr = `${year}-${month}-${date}`;
-        console.log(`[Home] Today's local date: ${todayStr}`);
+        const todayIsWeekend = isWeekend(today);
+        console.log(`[Home] Today's local date: ${todayStr}, Is Weekend: ${todayIsWeekend}`);
 
         let attendanceData = [];
         try {
@@ -275,6 +289,12 @@ const Home = ({ navigation }) => {
 
         const kidsWithStatus = await Promise.all(kids.map(async (kid) => {
           try {
+            // If today is weekend, set status to weekend regardless of attendance records
+            if (todayIsWeekend) {
+              console.log(`[Home] ${kid.name} - Weekend detected, setting status to weekend`);
+              return { ...kid, attendanceStatus: 'weekend', attendanceStatusLabel: 'Weekend', isWeekend: true };
+            }
+
             console.log(`[Home] Looking for attendance for: ${kid.name} (LRN: ${kid.lrn})`);
             console.log(`[Home] Today's date: ${todayStr}`);
             console.log(`[Home] Total attendance records: ${attendanceData.length}`);
@@ -297,25 +317,31 @@ const Home = ({ navigation }) => {
               const normalizedStatus = rawStatus.toLowerCase().trim().replace(/[\s_-]/g, '');
               console.log(`[Home] Normalized status: "${normalizedStatus}"`);
               
-              // Only allow the 4 valid statuses (pickup and dropoff count as present)
-              const validStatuses = ['present', 'absent', 'late', 'droppedout', 'dropout', 'pickup', 'dropoff'];
+              const validStatuses = ['present', 'absent', 'late', 'droppedout', 'dropout', 'pickup', 'dropoff', 'weekend', 'noclass'];
               const finalStatus = validStatuses.includes(normalizedStatus) ? normalizedStatus : 'absent';
               
-              return { ...kid, attendanceStatus: finalStatus, attendanceStatusLabel: rawStatus };
+              return { ...kid, attendanceStatus: finalStatus, attendanceStatusLabel: rawStatus, isWeekend: false };
             }
             console.log(`[Home] No attendance found for ${kid.name}, defaulting to absent`);
-            return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
+            return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent', isWeekend: false };
           } catch (e) {
             console.warn('Failed fetching attendance for', kid.name, e);
-            return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
+            return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent', isWeekend: false };
           }
         }));
         setChildNames(kidsWithStatus);
         setLoadingChild(false);
       } catch (e) {
         console.warn('Failed to fetch attendance statuses', e);
-        const absentKids = kids.map(k => ({ ...k, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' }));
-        setChildNames(absentKids);
+        const today = new Date();
+        const todayIsWeekend = isWeekend(today);
+        const defaultKids = kids.map(k => ({ 
+          ...k, 
+          attendanceStatus: todayIsWeekend ? 'weekend' : 'absent', 
+          attendanceStatusLabel: todayIsWeekend ? 'Weekend' : 'Absent',
+          isWeekend: todayIsWeekend
+        }));
+        setChildNames(defaultKids);
         setLoadingChild(false);
       }
     } catch (err) {
@@ -360,7 +386,7 @@ const Home = ({ navigation }) => {
                 <Text style={[styles.childName, { color: '#fff' }]}>No child found</Text>
               ) : (
                 childNames.map((c, i) => {
-                  const statusInfo = getStatusInfo(c.attendanceStatus);
+                  const statusInfo = getStatusInfo(c.attendanceStatus, c.isWeekend);
                   return (
                     <View key={i} style={{ marginBottom: 6 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

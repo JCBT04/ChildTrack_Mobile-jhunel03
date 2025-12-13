@@ -13,23 +13,51 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
-    },
+      "supportsTablet": true,
+      "bundleIdentifier": "com.childtrack.parentapp",
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"]
+      }
+     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/ficon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.jhunel03.snackc5b80c95890b4f8fa8950b0a31a3c336"
+      "package": "com.jhunel03.snackc5b80c95890b4f8fa8950b0a31a3c336",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ],
+      "useNextNotificationsApi": true
     },
     "web": {
       "favicon": "./assets/ficon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#3498db",
+          "sounds": ["./assets/notification-sound.wav"],
+          "mode": "production"
+        }
+      ]
+    ],
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#3498db",
+      "androidMode": "default",
+      "androidCollapsedTitle": "ChildTrack Updates"
     },
     "extra": {
       "eas": {
         "projectId": "52f33085-1102-4665-8526-15ea6f5de902"
       }
     }
+  
   }
 }
