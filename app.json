@@ -25,7 +25,7 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.jhunel03.snackc5b80c95890b4f8fa8950b0a31a3c336",
+      "package": "com.childtrack.parentapp",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
