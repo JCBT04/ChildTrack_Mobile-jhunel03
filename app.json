@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ChildTrack",
-    "slug": "snack-c5b80c95-890b-4f8f-a895-0b0a31a3c336",
+    "slug": "ChildTrack",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/ficon.png",
@@ -40,9 +40,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
+          "icon": "./assets/ficon.png",
           "color": "#3498db",
-          "sounds": ["./assets/notification-sound.wav"],
           "mode": "production"
         }
       ]
