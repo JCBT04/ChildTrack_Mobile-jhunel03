@@ -13,6 +13,7 @@ import {
   Platform,
   ScrollView,
   Alert,
+  Modal,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
@@ -45,6 +46,15 @@ const Login = ({ navigation }) => {
   const [parentsLoading, setParentsLoading] = useState(false);
   const [parentsData, setParentsData] = useState(null);
   const [rememberMe, setRememberMe] = useState(false);
+  const [forgotModalVisible, setForgotModalVisible] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [codeModalVisible, setCodeModalVisible] = useState(false);
+  const [resetCode, setResetCode] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [resetSubmitting, setResetSubmitting] = useState(false);
 
   const passwordRef = useRef(null);
 
@@ -331,6 +341,110 @@ const Login = ({ navigation }) => {
     }
   };
 
+  const requestPasswordReset = async () => {
+    const email = (resetEmail || '').trim();
+    if (!email) {
+      setResetMessage('Please enter your email');
+      return;
+    }
+    setResetLoading(true);
+    setResetMessage('');
+    try {
+      const endpoint = `${BACKEND_URL}/api/parents/password-reset/`;
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const text = await resp.text();
+      const contentType = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
+      // If server returned HTML (e.g., 404 page), avoid showing raw HTML to users.
+      const looksLikeHtml = contentType.includes('text/html') || (text && text.trim().startsWith('<'));
+      let json = null;
+      if (!looksLikeHtml) {
+        try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
+      }
+      if (!resp.ok) {
+        if (looksLikeHtml) {
+          console.warn('[Forgot] server returned HTML error response');
+          if (resp.status === 404) {
+            setResetMessage('No account found for that email.');
+          } else {
+            setResetMessage(`Server returned an error (${resp.status}). Please try again later or contact support.`);
+          }
+        } else {
+          const msg = (json && (json.detail || json.error || json.message)) || text || `HTTP ${resp.status}`;
+          setResetMessage(msg.toString());
+        }
+        return;
+      }
+      // Success - prompt for code
+      setResetMessage((json && (json.detail || json.message)) || 'Check your email for a verification code');
+      setForgotModalVisible(false);
+      setCodeModalVisible(true);
+    } catch (err) {
+      console.error('[Forgot] error', err);
+      setResetMessage('Failed to request reset. Please try again.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const submitPasswordReset = async () => {
+    if (!resetCode || !resetNewPassword) {
+      Alert.alert('Error', 'Please fill the code and new password');
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+    if (resetNewPassword.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+    setResetSubmitting(true);
+    try {
+      const endpoint = `${BACKEND_URL}/api/parents/password-reset/confirm/`;
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail, code: resetCode, new_password: resetNewPassword }),
+      });
+      const text = await resp.text();
+      const contentType = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
+      const looksLikeHtml = contentType.includes('text/html') || (text && text.trim().startsWith('<'));
+      let json = null;
+      if (!looksLikeHtml) {
+        try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
+      }
+      if (!resp.ok) {
+        if (looksLikeHtml) {
+          console.warn('[Reset submit] server returned HTML error response');
+          if (resp.status === 404) {
+            Alert.alert('Error', 'Reset request not found or expired. Please request a new code.');
+          } else {
+            Alert.alert('Error', `Server returned an error (${resp.status}). Please try again later or contact support.`);
+          }
+        } else {
+          const msg = (json && (json.detail || json.error || json.message)) || text || `HTTP ${resp.status}`;
+          Alert.alert('Error', msg.toString());
+        }
+        return;
+      }
+      Alert.alert('Success', 'Password changed. Please login with your new password.');
+      setCodeModalVisible(false);
+      setResetCode('');
+      setResetNewPassword('');
+      setResetConfirmPassword('');
+    } catch (err) {
+      console.error('[Reset submit] error', err);
+      Alert.alert('Error', 'Failed to change password. Please try again.');
+    } finally {
+      setResetSubmitting(false);
+    }
+  };
+
   return (
     <LinearGradient
       colors={isDark ? ["#0b0f19", "#1a1f2b"] : ["#f5f5f5", "#e0e0e0"]}
@@ -440,6 +554,10 @@ const Login = ({ navigation }) => {
                 </TouchableOpacity>
               </View>
 
+              <TouchableOpacity onPress={() => setForgotModalVisible(true)} style={{ alignSelf: 'flex-end', marginBottom: 12 }}>
+                <Text style={{ color: isDark ? '#8ecaf6' : '#0277bd', fontWeight: '600' }}>Forgot password?</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity onPress={handleLogin} disabled={loading}>
                 <LinearGradient
                   colors={isDark ? ["#0D47A1", "#1565C0"] : ["#4FC3F7", "#0288D1"]}
@@ -456,9 +574,107 @@ const Login = ({ navigation }) => {
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
+      <ForgotPasswordModal
+        visible={forgotModalVisible}
+        onClose={() => setForgotModalVisible(false)}
+        email={resetEmail}
+        setEmail={setResetEmail}
+        onRequest={requestPasswordReset}
+        loading={resetLoading}
+        message={resetMessage}
+        isDark={isDark}
+      />
+
+      <CodeResetModal
+        visible={codeModalVisible}
+        onClose={() => setCodeModalVisible(false)}
+        email={resetEmail}
+        code={resetCode}
+        setCode={setResetCode}
+        newPass={resetNewPassword}
+        setNewPass={setResetNewPassword}
+        confirmPass={resetConfirmPassword}
+        setConfirmPass={setResetConfirmPassword}
+        onSubmit={submitPasswordReset}
+        loading={resetSubmitting}
+        isDark={isDark}
+      />
     </LinearGradient>
   );
 };
+
+// Forgot password modal components placed after main component for readability
+const ForgotPasswordModal = ({ visible, onClose, email, setEmail, onRequest, loading, message, isDark }) => (
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <TouchableWithoutFeedback onPress={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
+        <TouchableWithoutFeedback>
+          <View style={{ backgroundColor: isDark ? '#222' : '#fff', borderRadius: 12, padding: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#333', marginBottom: 8 }}>Reset Password</Text>
+            <Text style={{ color: isDark ? '#ddd' : '#666', marginBottom: 12 }}>Enter the email address for your account.</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 8, padding: 8, backgroundColor: isDark ? '#111' : '#f6f6f6' }}>
+              <Ionicons name="mail-outline" size={18} color={isDark ? '#aaa' : '#777'} />
+              <TextInput
+                placeholder="Email"
+                placeholderTextColor={isDark ? '#888' : '#999'}
+                value={email}
+                onChangeText={setEmail}
+                style={{ marginLeft: 8, color: isDark ? '#fff' : '#000', flex: 1 }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            </View>
+            {message ? <Text style={{ color: '#f39c12', marginTop: 10 }}>{message}</Text> : null}
+            <View style={{ flexDirection: 'row', marginTop: 14 }}>
+              <TouchableOpacity onPress={onRequest} style={{ flex: 1, backgroundColor: '#0288D1', padding: 12, borderRadius: 8, alignItems: 'center', marginRight: 8 }} disabled={loading}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{loading ? 'Sending...' : 'Send'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose} style={{ flex: 1, backgroundColor: '#e0e0e0', padding: 12, borderRadius: 8, alignItems: 'center' }}>
+                <Text style={{ fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </View>
+    </TouchableWithoutFeedback>
+  </Modal>
+);
+
+const CodeResetModal = ({ visible, onClose, email, code, setCode, newPass, setNewPass, confirmPass, setConfirmPass, onSubmit, loading, isDark }) => (
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <TouchableWithoutFeedback onPress={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
+        <TouchableWithoutFeedback>
+          <View style={{ backgroundColor: isDark ? '#222' : '#fff', borderRadius: 12, padding: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#333', marginBottom: 8 }}>Enter Verification Code</Text>
+            <Text style={{ color: isDark ? '#ddd' : '#666', marginBottom: 12 }}>Enter the code sent to your email and choose a new password.</Text>
+
+            <View style={{ marginBottom: 8 }}>
+              <TextInput placeholder="Verification code" placeholderTextColor={isDark ? '#888' : '#999'} value={code} onChangeText={setCode} style={{ backgroundColor: isDark ? '#111' : '#f6f6f6', padding: 10, borderRadius: 8, color: isDark ? '#fff' : '#000' }} />
+            </View>
+
+            <View style={{ marginBottom: 8 }}>
+              <TextInput placeholder="New password" placeholderTextColor={isDark ? '#888' : '#999'} value={newPass} onChangeText={setNewPass} secureTextEntry style={{ backgroundColor: isDark ? '#111' : '#f6f6f6', padding: 10, borderRadius: 8, color: isDark ? '#fff' : '#000' }} />
+            </View>
+
+            <View style={{ marginBottom: 8 }}>
+              <TextInput placeholder="Confirm password" placeholderTextColor={isDark ? '#888' : '#999'} value={confirmPass} onChangeText={setConfirmPass} secureTextEntry style={{ backgroundColor: isDark ? '#111' : '#f6f6f6', padding: 10, borderRadius: 8, color: isDark ? '#fff' : '#000' }} />
+            </View>
+
+            <View style={{ flexDirection: 'row', marginTop: 12 }}>
+              <TouchableOpacity onPress={onSubmit} style={{ flex: 1, backgroundColor: '#27ae60', padding: 12, borderRadius: 8, alignItems: 'center', marginRight: 8 }} disabled={loading}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{loading ? 'Submitting...' : 'Submit'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose} style={{ flex: 1, backgroundColor: '#e0e0e0', padding: 12, borderRadius: 8, alignItems: 'center' }}>
+                <Text style={{ fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </View>
+    </TouchableWithoutFeedback>
+  </Modal>
+);
 
 const styles = StyleSheet.create({
   container: { 
@@ -528,3 +744,6 @@ const styles = StyleSheet.create({
 });
 
 export default Login;
+
+// Export modals as part of default so bundlers can tree-shake if needed
+export { ForgotPasswordModal, CodeResetModal };

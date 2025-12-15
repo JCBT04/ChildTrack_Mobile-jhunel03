@@ -65,22 +65,40 @@ const Unregistered = ({ navigation }) => {
 
       // Map backend data to frontend format
       const mapped = guardians.map((g) => {
-        // Priority: photo_url from serializer > photo field > null
+        // Priority: photo_url from serializer > photo_base64 > photo field > null
         let photoUri = null;
-        
+
         if (g.photo_url) {
           photoUri = g.photo_url;
           console.log(`[Guardian ${g.id}] Using photo_url:`, photoUri);
-        } else if (g.photo) {
-          // Handle relative paths
-          if (g.photo.startsWith('http://') || g.photo.startsWith('https://')) {
-            photoUri = g.photo;
-          } else {
-            // Remove leading slash if present to avoid double slashes
-            const photoPath = g.photo.startsWith('/') ? g.photo : `/${g.photo}`;
-            photoUri = `${BACKEND_URL}${photoPath}`;
+
+        } else if (g.photo_base64) {
+          // Some backends store raw base64 under `photo_base64`
+          const raw = (typeof g.photo_base64 === 'string') ? g.photo_base64.trim() : '';
+          if (raw) {
+            const b64 = raw.includes('base64,') ? raw.split('base64,', 2)[1] : raw;
+            photoUri = `data:image/jpeg;base64,${b64}`;
+            console.log(`[Guardian ${g.id}] Using photo_base64 field, constructed data URI`);
           }
-          console.log(`[Guardian ${g.id}] Using photo field, constructed URL:`, photoUri);
+
+        } else if (g.photo) {
+          // g.photo might be: a full URL, a data URI, raw base64, or a backend-relative path
+          if (typeof g.photo === 'string') {
+            const trimmed = g.photo.trim();
+            if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+              photoUri = trimmed;
+            } else if (trimmed.includes('base64,') || /^[A-Za-z0-9+/=\n\r]+$/.test(trimmed)) {
+              // Raw base64
+              const b64 = trimmed.includes('base64,') ? trimmed.split('base64,', 2)[1] : trimmed;
+              photoUri = `data:image/jpeg;base64,${b64}`;
+            } else {
+              // Treat as a relative path on the backend
+              const photoPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+              photoUri = `${BACKEND_URL}${photoPath}`;
+            }
+          }
+          console.log(`[Guardian ${g.id}] Using photo field (resolved):`, photoUri);
+
         } else {
           console.log(`[Guardian ${g.id}] No photo available`);
         }
